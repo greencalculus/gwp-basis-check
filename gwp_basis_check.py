@@ -243,19 +243,23 @@ def records(text):
     offset = 0
     for block in re.split(r"[{}]", text):
         nm = NAME.search(block)
-        fields = FIELD.findall(block)
-        if nm and fields:
+        if nm:
             gas = canon(nm.group(1))
             if gas:
                 vals = {}
-                for basis, num in fields:
+                lines = {}
+                name_line = text[:offset + nm.start()].count("\n") + 1
+                for fm in FIELD.finditer(block):
+                    basis = fm.group(1).lower()
+                    num = fm.group(2)
                     try:
-                        vals[basis.lower()] = float(num.replace(",", ""))
+                        vals[basis] = float(num.replace(",", ""))
+                        lines[basis] = text[:offset + fm.start()].count("\n") + 1
                     except ValueError:
                         pass
                 if vals:
-                    line = text[:offset + nm.start()].count("\n") + 1
-                    out.append((nm.group(1), gas, vals, line))
+                    lines["_default"] = name_line
+                    out.append((nm.group(1), gas, vals, lines))
         offset += len(block) + 1
     out.extend(basis_maps(text))
     return out
@@ -282,7 +286,7 @@ def check(path):
                 if ov is None or coincides(gas, basis, other):
                     continue
                 if abs(v - float(ov)) < 0.051:
-                    line = line_info.get(basis) if isinstance(line_info, dict) else line_info
+                    line = (line_info.get(basis) or line_info.get("_default")) if isinstance(line_info, dict) else line_info
                     f = {"type": "MISLABEL", "gas": raw, "canonical": gas,
                          "labelled": basis, "value": v,
                          "actually": other, "expected": ref}
@@ -301,7 +305,7 @@ def check(path):
             first_line = None
             for _, _, l in pairs:
                 if isinstance(l, dict):
-                    first_line = l.get(b) or l.get(a)
+                    first_line = l.get(b) or l.get(a) or l.get("_default")
                 elif l is not None:
                     first_line = l
                 if first_line is not None:
@@ -493,6 +497,27 @@ def self_test():
     line_ok = bool(mislabels and mislabels[0].get("line") == 4)
     ok &= line_ok
     print(f"  [{'PASS' if line_ok else 'FAIL'}] {'line number reported on a known finding':60} "
+          f"{'got line ' + str(mislabels[0].get('line')) if mislabels else 'no findings'}")
+
+    # Multiline record assertion: finding must report the line of the offending field, not the name
+    multiline_body = (
+        "const table = [\n"
+        "  {\n"
+        "    name: 'HFC-410A',\n"
+        "    gwp_ar4: 2088,\n"
+        "    gwp_ar5: 2088,\n"
+        "  }\n"
+        "];\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".ts", delete=False) as fh:
+        fh.write(multiline_body)
+        tmp = fh.name
+    _, findings = check(tmp)
+    os.unlink(tmp)
+    mislabels = [f for f in findings if f["type"] == "MISLABEL"]
+    multi_ok = bool(mislabels and mislabels[0].get("line") == 5)
+    ok &= multi_ok
+    print(f"  [{'PASS' if multi_ok else 'FAIL'}] {'line number points to offending field in multiline record':60} "
           f"{'got line ' + str(mislabels[0].get('line')) if mislabels else 'no findings'}")
 
     print(f"\nreference {REF.get('version')} · reports {'/'.join(b.upper() for b in BASES)}")

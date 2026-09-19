@@ -132,15 +132,24 @@ def basis_maps(text):
         if not b:
             continue
         basis = b.group(0).lower()
-        for gas_raw, num in ENTRY.findall(m.group(2)):
+        for em in ENTRY.finditer(m.group(2)):
+            gas_raw, num = em.group(1), em.group(2)
             gas = canon(gas_raw)
             if not gas:
                 continue
             try:
-                found.setdefault((gas_raw, gas), {})[basis] = float(num.replace(",", ""))
+                val = float(num.replace(",", ""))
+                entry_line = text[:m.start(2) + em.start()].count("\n") + 1
+                found.setdefault((gas_raw, gas), {})[basis] = (val, entry_line)
             except ValueError:
                 pass
-    return [(raw, gas, vals) for (raw, gas), vals in found.items() if vals]
+    out = []
+    for (raw, gas), b_dict in found.items():
+        vals = {b: val for b, (val, _) in b_dict.items()}
+        lines = {b: ln for b, (_, ln) in b_dict.items()}
+        if vals:
+            out.append((raw, gas, vals, lines))
+    return out
 
 
 def _basis_of_header(cell):
@@ -149,22 +158,28 @@ def _basis_of_header(cell):
 
 
 def _grids_html(text):
-    for tbl in re.findall(r"<table\b.*?</table>", text, re.S | re.I):
-        rows = re.findall(r"<tr\b.*?</tr>", tbl, re.S | re.I)
-        grid = [[re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
-                 for c in re.findall(r"<t[dh]\b.*?</t[dh]>", r, re.S | re.I)] for r in rows]
+    for tbl in re.finditer(r"<table\b.*?</table>", text, re.S | re.I):
+        rows = list(re.finditer(r"<tr\b.*?</tr>", tbl.group(0), re.S | re.I))
+        grid = []
+        for r in rows:
+            cells = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
+                     for c in re.findall(r"<t[dh]\b.*?</t[dh]>", r.group(0), re.S | re.I)]
+            row_line = text[:tbl.start() + r.start()].count("\n") + 1
+            grid.append((cells, row_line))
         if grid:
             yield grid
 
 
 def _grids_markdown(text):
     block = []
-    for line in text.splitlines() + [""]:
+    lines = text.splitlines()
+    for idx, line in enumerate(lines + [""]):
+        line_num = idx + 1
         if line.strip().startswith("|") and line.count("|") >= 3:
-            block.append([c.strip() for c in line.strip().strip("|").split("|")])
+            block.append(([c.strip() for c in line.strip().strip("|").split("|")], line_num))
         else:
             if len(block) >= 2:
-                grid = [r for r in block
+                grid = [(r, ln) for r, ln in block
                         if not all(re.fullmatch(r":?-{2,}:?", c or "") for c in r)]
                 if grid:
                     yield grid
@@ -175,9 +190,13 @@ def _grids_csv(text, path=""):
     if not str(path).lower().endswith((".csv", ".tsv")):
         return
     sep = "\t" if str(path).lower().endswith(".tsv") else ","
-    lines = [l for l in text.splitlines()[:4000] if l.strip()]
-    grid = [[c.strip().strip('"') for c in l.split(sep)] for l in lines]
-    if len(grid) >= 2 and len(grid[0]) >= 2:
+    lines = text.splitlines()[:4000]
+    grid = []
+    for idx, l in enumerate(lines):
+        if l.strip():
+            cells = [c.strip().strip('"') for c in l.split(sep)]
+            grid.append((cells, idx + 1))
+    if len(grid) >= 2 and len(grid[0][0]) >= 2:
         yield grid
 
 
@@ -185,7 +204,7 @@ def tables(text, path=""):
     out = []
     for grid in (list(_grids_html(text)) + list(_grids_markdown(text))
                  + list(_grids_csv(text, path))):
-        header = grid[0]
+        header = grid[0][0]
         cols = {}
         for i, c in enumerate(header):
             b = _basis_of_header(c)
@@ -193,7 +212,7 @@ def tables(text, path=""):
                 cols[i] = b
         if not cols:
             continue
-        for row in grid[1:]:
+        for row, row_line in grid[1:]:
             if len(row) < 2:
                 continue
             gas = nm = None
@@ -215,28 +234,33 @@ def tables(text, path=""):
                         except ValueError:
                             pass
             if vals:
-                out.append((nm, gas, vals))
+                out.append((nm, gas, vals, row_line))
     return out
 
 
 def records(text):
     out = []
+    offset = 0
     for block in re.split(r"[{}]", text):
         nm = NAME.search(block)
-        fields = FIELD.findall(block)
-        if not nm or not fields:
-            continue
-        gas = canon(nm.group(1))
-        if not gas:
-            continue
-        vals = {}
-        for basis, num in fields:
-            try:
-                vals[basis.lower()] = float(num.replace(",", ""))
-            except ValueError:
-                pass
-        if vals:
-            out.append((nm.group(1), gas, vals))
+        if nm:
+            gas = canon(nm.group(1))
+            if gas:
+                vals = {}
+                lines = {}
+                name_line = text[:offset + nm.start()].count("\n") + 1
+                for fm in FIELD.finditer(block):
+                    basis = fm.group(1).lower()
+                    num = fm.group(2)
+                    try:
+                        vals[basis] = float(num.replace(",", ""))
+                        lines[basis] = text[:offset + fm.start()].count("\n") + 1
+                    except ValueError:
+                        pass
+                if vals:
+                    lines["_default"] = name_line
+                    out.append((nm.group(1), gas, vals, lines))
+        offset += len(block) + 1
     out.extend(basis_maps(text))
     return out
 
@@ -246,7 +270,9 @@ def check(path):
     recs = records(text) + tables(text, str(path))
     findings = []
 
-    for raw, gas, vals in recs:
+    for item in recs:
+        raw, gas, vals = item[0], item[1], item[2]
+        line_info = item[3] if len(item) > 3 else None
         for basis, v in vals.items():
             if excluded(gas, basis):
                 continue
@@ -260,19 +286,35 @@ def check(path):
                 if ov is None or coincides(gas, basis, other):
                     continue
                 if abs(v - float(ov)) < 0.051:
-                    findings.append({"type": "MISLABEL", "gas": raw, "canonical": gas,
-                                     "labelled": basis, "value": v,
-                                     "actually": other, "expected": ref})
+                    line = (line_info.get(basis) or line_info.get("_default")) if isinstance(line_info, dict) else line_info
+                    f = {"type": "MISLABEL", "gas": raw, "canonical": gas,
+                         "labelled": basis, "value": v,
+                         "actually": other, "expected": ref}
+                    if line is not None:
+                        f["line"] = line
+                    findings.append(f)
                     break
 
     for a, b in consecutive_pairs():
-        pairs = [(g, v) for _, g, v in recs if a in v and b in v
-                 and not coincides(g, a, b)
-                 and FROZEN.get(g, {}).get(a) is not None
-                 and FROZEN.get(g, {}).get(b) is not None]
-        if len(pairs) >= 3 and all(abs(v[a] - v[b]) < 0.051 for _, v in pairs):
-            findings.append({"type": "COLUMN_COPY", "a": a, "b": b, "rows": len(pairs),
-                             "gases": sorted({g for g, _ in pairs})})
+        pairs = [(item[1], item[2], item[3] if len(item) > 3 else None) for item in recs
+                 if a in item[2] and b in item[2]
+                 and not coincides(item[1], a, b)
+                 and FROZEN.get(item[1], {}).get(a) is not None
+                 and FROZEN.get(item[1], {}).get(b) is not None]
+        if len(pairs) >= 3 and all(abs(v[a] - v[b]) < 0.051 for _, v, _ in pairs):
+            first_line = None
+            for _, _, l in pairs:
+                if isinstance(l, dict):
+                    first_line = l.get(b) or l.get(a) or l.get("_default")
+                elif l is not None:
+                    first_line = l
+                if first_line is not None:
+                    break
+            f = {"type": "COLUMN_COPY", "a": a, "b": b, "rows": len(pairs),
+                 "gases": sorted({g for g, _, _ in pairs})}
+            if first_line is not None:
+                f["line"] = first_line
+            findings.append(f)
     return recs, findings
 
 
@@ -311,12 +353,13 @@ def main():
         if not findings:
             print("  clean — every labelled cell matches the report it names")
         for f in findings:
+            loc = f"line {f['line']}: " if f.get("line") is not None else ""
             if f["type"] == "MISLABEL":
-                print(f"  MISLABEL    {f['gas']:14} field '{f['labelled']}' = {f['value']:g}"
+                print(f"  MISLABEL    {loc}{f['gas']:14} field '{f['labelled']}' = {f['value']:g}"
                       f"  -> that is {f['actually'].upper()}'s value;"
                       f" {f['labelled'].upper()} published {f['expected']:g}")
             else:
-                print(f"  COLUMN_COPY every {f['b']} equals its {f['a']} across "
+                print(f"  COLUMN_COPY {loc}every {f['b']} equals its {f['a']} across "
                       f"{f['rows']} rows where the reports differ "
                       f"({', '.join(f['gases'][:5])}{'…' if len(f['gases']) > 5 else ''})")
     if args.json:
@@ -436,6 +479,47 @@ def self_test():
         ok &= good
         print(f"  [{'PASS' if good else 'FAIL'}] {label[:58]:60} "
               f"{'got ' + str(sorted(types)) if types else 'clean'}")
+
+    # Line number assertion on a known finding
+    known_body = (
+        "// line 1\n"
+        "// line 2\n"
+        "const table = [\n"
+        "  { name: 'HFC-410A', gwp_ar4: 2088, gwp_ar5: 2088 }\n"
+        "];\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".ts", delete=False) as fh:
+        fh.write(known_body)
+        tmp = fh.name
+    _, findings = check(tmp)
+    os.unlink(tmp)
+    mislabels = [f for f in findings if f["type"] == "MISLABEL"]
+    line_ok = bool(mislabels and mislabels[0].get("line") == 4)
+    ok &= line_ok
+    print(f"  [{'PASS' if line_ok else 'FAIL'}] {'line number reported on a known finding':60} "
+          f"{'got line ' + str(mislabels[0].get('line')) if mislabels else 'no findings'}")
+
+    # Multiline record assertion: finding must report the line of the offending field, not the name
+    multiline_body = (
+        "const table = [\n"
+        "  {\n"
+        "    name: 'HFC-410A',\n"
+        "    gwp_ar4: 2088,\n"
+        "    gwp_ar5: 2088,\n"
+        "  }\n"
+        "];\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".ts", delete=False) as fh:
+        fh.write(multiline_body)
+        tmp = fh.name
+    _, findings = check(tmp)
+    os.unlink(tmp)
+    mislabels = [f for f in findings if f["type"] == "MISLABEL"]
+    multi_ok = bool(mislabels and mislabels[0].get("line") == 5)
+    ok &= multi_ok
+    print(f"  [{'PASS' if multi_ok else 'FAIL'}] {'line number points to offending field in multiline record':60} "
+          f"{'got line ' + str(mislabels[0].get('line')) if mislabels else 'no findings'}")
+
     print(f"\nreference {REF.get('version')} · reports {'/'.join(b.upper() for b in BASES)}")
     print("ALL PASS" if ok else "FAILURES ABOVE")
     return 0 if ok else 1

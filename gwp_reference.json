@@ -33,6 +33,11 @@
   "ar6": "IPCC AR6 (2021)"
  },
  "values": {
+    "HCFC_22": {
+    "ar4": 1810,
+    "ar5": 1760,
+    "ar6": 1960
+},
   "CH4_biogenic": {
    "ar4": 25,
    "ar5": 28,
@@ -249,11 +254,15 @@
   "HFO_1234yf.ar5": "AR5 published '<1' \u2014 a bound, not a number that can be compared."
  },
  "not_covered": {
-  "HCFC-22": "No row here, so the tool is blind to it. Published: AR4 1810 / AR5 1760 / AR6 1960.",
   "SAR": "Second Assessment Report columns are out of scope. SAR and AR5 both give HFC-134a 1,300, so a SAR column would break the mislabel test.",
   "CH4 (unqualified)": "AR6 publishes 27.0 non-fossil, 29.8 fossil and 27.9 origin-agnostic. An unlabelled methane row cannot be judged, and canon() returns None for it."
  },
  "aliases": {
+    "HCFC_22": [
+    "r-22",
+    "r22",
+    "chlorodifluoromethane"
+],
   "CH4_fossil": [
    "methane fossil",
    "ch4 fossil",

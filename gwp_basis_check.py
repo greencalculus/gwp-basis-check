@@ -415,6 +415,7 @@ def check_reference():
 
 def self_test():
     import tempfile, os
+    from gwp_basis_check_hook import hook_exit_code
     ok = True
     print("REFERENCE INTEGRITY")
     errs = check_reference()
@@ -436,6 +437,10 @@ def self_test():
         ok &= good
         print(f"  [{'PASS' if good else 'FAIL'}] {label[:58]:60} "
               f"{'got ' + str(sorted(types)) if types else 'clean'}")
+    hook_good = (hook_exit_code(0) == 0 and hook_exit_code(1) == 1
+                 and hook_exit_code(2) == 0)
+    ok &= hook_good
+    print(f"  [{'PASS' if hook_good else 'FAIL'}] pre-commit permits NOT CHECKED results")
     print(f"\nreference {REF.get('version')} · reports {'/'.join(b.upper() for b in BASES)}")
     print("ALL PASS" if ok else "FAILURES ABOVE")
     return 0 if ok else 1

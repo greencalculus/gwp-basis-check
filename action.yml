@@ -1,0 +1,39 @@
+name: GWP basis check
+description: Check labelled GWP values against the IPCC report they name.
+
+inputs:
+  paths:
+    description: Space-separated file paths or glob patterns to check.
+    required: false
+    default: "**/*.{py,ts,js,json,md,html,csv,tsv,yml,yaml}"
+
+runs:
+  using: composite
+  steps:
+    - name: Check labelled GWP values
+      shell: bash
+      run: |
+        shopt -s globstar nullglob
+        files=()
+        for pattern in ${{ inputs.paths }}; do
+          matches=( $pattern )
+          files+=( "${matches[@]}" )
+        done
+
+        status=2
+        if (( ${#files[@]} )); then
+          set +e
+          python3 "$GITHUB_ACTION_PATH/gwp_basis_check.py" "${files[@]}"
+          status=$?
+          set -e
+        else
+          echo "NOT CHECKED — no paths matched the supplied patterns."
+        fi
+
+        # 2 is an expected no-match result, not a failed CI check. Preserve
+        # other non-zero statuses so a genuine action/runtime failure is not
+        # mistaken for a clean scan.
+        if [[ "$status" -eq 0 || "$status" -eq 2 ]]; then
+          exit 0
+        fi
+        exit "$status"

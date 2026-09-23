@@ -145,6 +145,36 @@ python3 gwp_basis_check.py --self-test
 
 Exit codes: `0` nothing found · `1` findings · `2` nothing was checkable.
 
+### Run it with pre-commit
+
+Add this repository to a project's `.pre-commit-config.yaml`:
+
+```yaml
+- repo: https://github.com/greencalculus/gwp-basis-check
+  rev: v1
+  hooks:
+    - id: gwp-basis-check
+```
+
+The hook considers common source, table and documentation formats. A finding
+blocks the commit; `NOT CHECKED` does not, because most ordinary files do not
+contain a labelled GWP table.
+
+### Run it in GitHub Actions
+
+Use the composite action with one or more space-separated paths or glob
+patterns:
+
+```yaml
+- uses: greencalculus/gwp-basis-check@v1
+  with:
+    paths: 'src/**/*.py data/*.csv'
+```
+
+As with the hook, unmatched or unreadable shapes remain visibly `NOT CHECKED`
+without failing unrelated CI; a finding or a genuine runtime failure still
+fails the step.
+
 ## What file formats does it read?
 
 - a record carrying a gas name plus `ar4`/`ar5`/`ar6` fields — JSON, TypeScript, Python, SQL seed rows

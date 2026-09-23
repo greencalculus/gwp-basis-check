@@ -1,0 +1,6 @@
+- id: gwp-basis-check
+  name: Check labelled GWP values
+  entry: python3 gwp_basis_check_hook.py
+  language: system
+  pass_filenames: true
+  files: \.(?:py|ts|js|json|md|html?|csv|tsv|ya?ml)$
